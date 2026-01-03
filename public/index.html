@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Universal SMS OTP Extractor</title>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; margin: 40px; background-color: #f4f7f6; color: #333; }
+        .container { max-width: 900px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        h1 { color: #1a73e8; margin-bottom: 5px; }
+        .subtitle { color: #666; margin-bottom: 25px; }
+        .upload-box { border: 2px dashed #1a73e8; padding: 40px; text-align: center; border-radius: 10px; background: #f8fbff; cursor: pointer; transition: 0.3s; }
+        .upload-box:hover { background: #eff6ff; }
+        #file-input { display: none; }
+        .stats { margin: 20px 0; padding: 15px; background: #e8f0fe; color: #1967d2; border-radius: 6px; display: none; font-weight: 500; }
+        .btn-download { background: #34a853; color: white; padding: 12px 20px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; display: none; margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th { text-align: left; background: #f1f3f4; padding: 12px; border-bottom: 2px solid #ddd; font-size: 13px; }
+        td { padding: 12px; border-bottom: 1px solid #eee; font-size: 14px; }
+        .otp-badge { background: #fff0f0; color: #d93025; padding: 4px 8px; border-radius: 4px; font-family: 'Courier New', monospace; font-weight: bold; font-size: 1.1em; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Universal SMS OTP Extractor</h1>
+    <p class="subtitle">Supports Excel (<strong>.xlsx, .xls</strong>) and <strong>.csv</strong> files.</p>
+
+    <div class="upload-box" onclick="document.getElementById('file-input').click()">
+        <p id="file-label">Click to upload or Drag & Drop your file here</p>
+        <strong>Excel or CSV</strong>
+        <input type="file" id="file-input" accept=".csv, .xlsx, .xls">
+    </div>
+
+    <div id="stats-area" class="stats"></div>
+    <button id="download-btn" class="btn-download" onclick="downloadTXT()">Download number|otp list</button>
+
+    <table id="result-table" style="display:none;">
+        <thead>
+            <tr>
+                <th>Phone Number</th>
+                <th>Extracted OTP</th>
+            </tr>
+        </thead>
+        <tbody id="table-body"></tbody>
+    </table>
+</div>
+
+<script>
+    const fileInput = document.getElementById('file-input');
+    const tableBody = document.getElementById('table-body');
+    const resultTable = document.getElementById('result-table');
+    const downloadBtn = document.getElementById('download-btn');
+    const statsArea = document.getElementById('stats-area');
+    let extractedData = [];
+
+    fileInput.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            const data = new Uint8Array(event.target.result);
+            const workbook = XLSX.read(data, {type: 'array'});
+            
+            // Get the first sheet
+            const sheetName = workbook.SheetNames[0];
+            const worksheet = workbook.Sheets[sheetName];
+            
+            // Convert to JSON (array of arrays)
+            const rows = XLSX.utils.sheet_to_json(worksheet, {header: 1});
+            processRows(rows);
+        };
+        reader.readAsArrayBuffer(file);
+    });
+
+    function processRows(rows) {
+        extractedData = [];
+        tableBody.innerHTML = '';
+        
+        // Find Column Indices for "Number" and "SMS"
+        let numIdx = 2; // Default based on your file
+        let smsIdx = 4; // Default based on your file
+
+        // Search for header row to be sure
+        for(let i=0; i < Math.min(rows.length, 10); i++) {
+            const row = rows[i].map(c => String(c).toLowerCase());
+            if(row.includes('number') && (row.includes('sms') || row.includes('content'))) {
+                numIdx = row.indexOf('number');
+                smsIdx = row.includes('sms') ? row.indexOf('sms') : row.indexOf('content');
+                break;
+            }
+        }
+
+        rows.forEach((row, index) => {
+            const number = String(row[numIdx] || '').trim();
+            const smsText = String(row[smsIdx] || '').trim();
+
+            if (number && number !== '0' && number.toLowerCase() !== 'number') {
+                const otp = extractOTP(smsText);
+                if (otp) {
+                    extractedData.push({ number, otp });
+                    const tr = `<tr><td>${number}</td><td><span class="otp-badge">${otp}</span></td></tr>`;
+                    tableBody.insertAdjacentHTML('beforeend', tr);
+                }
+            }
+        });
+
+        if (extractedData.length > 0) {
+            resultTable.style.display = 'table';
+            downloadBtn.style.display = 'block';
+            statsArea.style.display = 'block';
+            statsArea.textContent = `Successfully extracted ${extractedData.length} records.`;
+        } else {
+            alert("No data found. Ensure your file has 'Number' and 'SMS' columns.");
+        }
+    }
+
+    function extractOTP(text) {
+        if (!text) return null;
+        // Clean invisible Arabic/RTL characters
+        const clean = text.replace(/[\u200B-\u200D\uFEFF\u200E\u200F]/g, '');
+        
+        // Pattern 1: Spaced code (123 456)
+        const spaced = clean.match(/(\d{3})\s+(\d{3})/);
+        if (spaced) return spaced[1] + spaced[2];
+
+        // Pattern 2: Consecutive digits 4 to 8 long
+        const match = clean.match(/\d{4,8}/);
+        return match ? match[0] : null;
+    }
+
+    function downloadTXT() {
+        let content = extractedData.map(d => `${d.number}|${d.otp}`).join('\n');
+        const blob = new Blob([content], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'otps_extracted.txt';
+        a.click();
+    }
+</script>
+
+</body>
+  </html>
